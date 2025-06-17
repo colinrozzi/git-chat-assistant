@@ -1,0 +1,26 @@
+name = "git-chat-assistant"
+version = "0.1.0"
+component = "/Users/colinrozzi/work/actor-registry/git-chat-assistant/./target/wasm32-unknown-unknown/release/git_chat_assistant.wasm"
+
+[[handlers]]
+type = "message-server"
+
+[handlers.config]
+
+[[handlers]]
+type = "runtime"
+
+[handlers.config]
+
+[[handlers]]
+type = "supervisor"
+
+[handlers.config]
+
+[[handlers]]
+type = "random"
+
+[handlers.config]
+max_bytes = 1048576
+max_int = 9223372036854775807
+allow_crypto_secure = false

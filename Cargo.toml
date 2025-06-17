@@ -1,0 +1,19 @@
+[package]
+name = "git-chat-assistant"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+wit-bindgen-rt = { version = "0.42.1", features = ["bitflags"] }
+genai-types = "0.4.2"
+
+[package.metadata.component]
+package = "theater:git-chat-assistant"
+
+[package.metadata.component.target.dependencies]
+"theater:simple" = { path = "./wit/deps/theater-simple" }
