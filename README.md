@@ -48,42 +48,22 @@ cargo component build --release
 
 ### Configuration
 
-The actor accepts any chat configuration as its initial state and automatically enhances it with git tools:
+The actor uses a predefined, optimized configuration for git workflows. No configuration is required when using this actor - it comes pre-configured with:
 
-```json
-{
-  "model_config": {
-    "model": "claude-sonnet-4-20250514",
-    "provider": "anthropic"
-  },
-  "temperature": 1.0,
-  "max_tokens": 8192,
-  "system_prompt": "You are a helpful programming assistant.",
-  "title": "My Git Assistant"
-}
-```
-
-The actor will automatically:
-- Add git-specific system prompt instructions
-- Include git MCP server configuration
-- Set appropriate title if none provided
+- **Model**: Claude Sonnet 4 (claude-sonnet-4-20250514)
+- **Temperature**: 0.7 (balanced for code tasks)
+- **Git-specific system prompt** with detailed instructions
+- **Built-in git MCP server** for tool access
+- **Optimized settings** for commit assistance and repository management
 
 ### Using with theater-chat
 
-Create a configuration file that points to this actor:
+Create a simple configuration file that points to this actor:
 
 ```json
 {
   "actor": {
     "manifest_path": "/path/to/git-chat-assistant/manifest.toml"
-  },
-  "config": {
-    "model_config": {
-      "model": "claude-sonnet-4-20250514", 
-      "provider": "anthropic"
-    },
-    "system_prompt": "You are a senior developer helping with git workflows.",
-    "title": "Git Workflow Assistant"
   }
 }
 ```

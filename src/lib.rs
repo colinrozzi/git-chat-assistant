@@ -60,46 +60,21 @@ impl GitChatState {
 }
 
 impl Guest for Component {
-    fn init(state: Option<Vec<u8>>, params: (String,)) -> Result<(Option<Vec<u8>>,), String> {
+    fn init(_state: Option<Vec<u8>>, params: (String,)) -> Result<(Option<Vec<u8>>,), String> {
         log("Git chat assistant actor initializing...");
 
         let (actor_id,) = params;
 
-        // Parse the initial state (base config, we'll enhance it with git tools)
-        let base_config = match state {
-            Some(state_bytes) => match from_slice::<Value>(&state_bytes) {
-                Ok(config) => {
-                    log(&format!("Parsed base config: {}", config));
-                    config
-                }
-                Err(e) => {
-                    let error_msg = format!("Failed to parse initial state: {}", e);
-                    log(&error_msg);
-                    return Err(error_msg);
-                }
-            },
-            None => {
-                log("No initial state provided, using default git config");
-                serde_json::json!({
-                    "model_config": {
-                        "model": "claude-sonnet-4-20250514",
-                        "provider": "anthropic"
-                    },
-                    "temperature": 1.0,
-                    "max_tokens": 8192,
-                    "title": "Git Assistant"
-                })
-            }
-        };
-
-        // Enhance the config with git-specific settings
-        let enhanced_config = enhance_config_with_git_tools(base_config)?;
+        // Create a predefined git-optimized configuration
+        let git_config = create_git_optimized_config();
+        
+        log(&format!("Using predefined git config: {}", git_config));
 
         // Create our state
-        let mut git_state = GitChatState::new(actor_id, enhanced_config.clone());
+        let mut git_state = GitChatState::new(actor_id, git_config.clone());
 
-        // Spawn the chat-state actor with the enhanced config
-        match spawn_chat_state_actor(&enhanced_config) {
+        // Spawn the chat-state actor with the git config
+        match spawn_chat_state_actor(&git_config) {
             Ok(chat_actor_id) => {
                 log(&format!("Chat state actor spawned: {}", chat_actor_id));
                 git_state.set_chat_state_actor_id(chat_actor_id);
@@ -319,10 +294,9 @@ impl MessageServerClient for Component {
 }
 
 // Helper functions
-fn enhance_config_with_git_tools(mut base_config: Value) -> Result<Value, String> {
-    log("Enhancing config with git tools...");
+fn create_git_optimized_config() -> Value {
+    log("Creating git-optimized configuration...");
 
-    // Set a git-specific system prompt if none exists or enhance existing one
     let git_system_prompt = "You are a Git assistant with access to git tools. You can help with:
 
 - Reviewing git status and changes
@@ -333,42 +307,39 @@ fn enhance_config_with_git_tools(mut base_config: Value) -> Result<Value, String
 - Handling merge conflicts
 - Git workflow best practices
 
-You have access to git tools that allow you to interact with the repository. Always be helpful and provide clear explanations of git operations.";
+You have access to git tools that allow you to interact with the repository. Always be helpful and provide clear explanations of git operations.
 
-    // If there's an existing system prompt, enhance it with git context
-    if let Some(existing_prompt) = base_config.get("system_prompt").and_then(|p| p.as_str()) {
-        let enhanced_prompt = format!("{}\n\n{}", existing_prompt, git_system_prompt);
-        base_config["system_prompt"] = serde_json::Value::String(enhanced_prompt);
-    } else {
-        base_config["system_prompt"] = serde_json::Value::String(git_system_prompt.to_string());
-    }
+When helping with commits:
+- Always review the changes first before suggesting commit messages
+- Create descriptive, conventional commit messages
+- Suggest appropriate files to stage if not already staged
+- Explain the impact of changes when relevant";
 
-    // Set a git-specific title if none exists
-    if base_config.get("title").is_none() {
-        base_config["title"] = serde_json::Value::String("Git Assistant".to_string());
-    }
-
-    // Add git MCP server to the configuration
-    let git_mcp_server = serde_json::json!({
-        "actor_id": null,
-        "actor": {
-            "manifest_path": "/Users/colinrozzi/work/actor-registry/git-mcp-actor/manifest.toml"
+    let config = serde_json::json!({
+        "model_config": {
+            "model": "claude-sonnet-4-20250514",
+            "provider": "anthropic"
         },
-        "tools": null
+        "temperature": 0.7,
+        "max_tokens": 8192,
+        "system_prompt": git_system_prompt,
+        "title": "Git Assistant",
+        "description": "AI assistant with git tools for repository management and commit workflows",
+        "mcp_servers": [
+            {
+                "actor_id": null,
+                "actor": {
+                    "manifest_path": "/Users/colinrozzi/work/actor-registry/git-mcp-actor/manifest.toml"
+                },
+                "tools": null
+            }
+        ]
     });
 
-    // Add to existing mcp_servers or create new array
-    if let Some(mcp_servers) = base_config.get_mut("mcp_servers") {
-        if let Some(servers_array) = mcp_servers.as_array_mut() {
-            servers_array.push(git_mcp_server);
-        }
-    } else {
-        base_config["mcp_servers"] = serde_json::Value::Array(vec![git_mcp_server]);
-    }
-
-    log(&format!("Enhanced config: {}", base_config));
-    Ok(base_config)
+    log(&format!("Created git config: {}", config));
+    config
 }
+
 
 fn spawn_chat_state_actor(chat_config: &Value) -> Result<String, String> {
     log("Spawning chat-state actor...");
