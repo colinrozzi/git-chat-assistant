@@ -1,10 +1,11 @@
 {
+  "current_directory": "/path/to/your/repository",
   "model_config": {
-    "model": "claude-sonnet-4-20250514",
-    "provider": "anthropic"
+    "model": "gpt-4",
+    "provider": "openai"
   },
-  "temperature": 1.0,
-  "max_tokens": 8192,
-  "system_prompt": "You are a senior software engineer helping with git workflows and repository management.",
-  "title": "Git Workflow Assistant"
+  "temperature": 0.5,
+  "max_tokens": 4096,
+  "title": "Custom Git Assistant",
+  "system_prompt": "You are an expert Git consultant with deep knowledge of advanced workflows. Focus on best practices and enterprise-level git strategies."
 }

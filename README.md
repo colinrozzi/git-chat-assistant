@@ -48,15 +48,27 @@ cargo component build --release
 
 ### Configuration
 
-The actor uses a predefined, optimized configuration for git workflows. No configuration is required when using this actor - it comes pre-configured with:
+The actor comes with optimized defaults for git workflows, but **every setting can be customized** through the initial configuration:
 
+**Default Configuration:**
 - **Model**: Claude Sonnet 4 (claude-sonnet-4-20250514)
 - **Temperature**: 0.7 (balanced for code tasks)
+- **Max Tokens**: 8192
 - **Git-specific system prompt** with detailed instructions
 - **Built-in git MCP server** for tool access
-- **Optimized settings** for commit assistance and repository management
+- **Title**: "Git Assistant"
+
+**Fully Customizable:**
+- **Any AI model/provider** (Claude, GPT-4, Gemini, etc.)
+- **Temperature and token limits**
+- **Custom system prompts** (with automatic directory context)
+- **Session titles and descriptions**
+- **Current directory** for repository context
+- **MCP server configurations** (advanced)
 
 ### Using with theater-chat
+
+#### Basic Usage (No Directory Context)
 
 Create a simple configuration file that points to this actor:
 
@@ -68,10 +80,27 @@ Create a simple configuration file that points to this actor:
 }
 ```
 
+#### With Current Directory Context (Recommended)
+
+Create a configuration file that includes the repository path:
+
+```json
+{
+  "actor": {
+    "manifest_path": "/path/to/git-chat-assistant/manifest.toml",
+    "initial_state": {
+      "current_directory": "/path/to/your/repository"
+    }
+  }
+}
+```
+
 Then run:
 ```bash
 theater-chat --config git-config.json
 ```
+
+With directory context, the assistant will know exactly which repository to operate on and can provide more targeted assistance.
 
 ## Example Interactions
 
@@ -139,9 +168,74 @@ The assistant can help with:
 The actor automatically enhances any base configuration with:
 
 1. **System Prompt Addition**: Adds git-specific instructions and capabilities
-2. **Git Tools**: Includes git MCP server in the mcp_servers array
-3. **Title Enhancement**: Sets appropriate title if none provided
-4. **Tool Context**: Ensures the AI understands available git operations
+2. **Directory Context**: Includes current working directory in the system prompt if provided
+3. **Git Tools**: Includes git MCP server in the mcp_servers array
+4. **Title Enhancement**: Sets appropriate title if none provided
+5. **Tool Context**: Ensures the AI understands available git operations
+
+### Configuration Format
+
+When providing initial state, you can override any of the default settings:
+
+```json
+{
+  "current_directory": "/path/to/repository",
+  "model_config": {
+    "model": "gpt-4",
+    "provider": "openai"
+  },
+  "temperature": 0.5,
+  "max_tokens": 4096,
+  "title": "Custom Git Assistant",
+  "description": "My specialized git helper",
+  "system_prompt": "You are an expert Git consultant..."
+}
+```
+
+**All fields are optional** - the actor will use sensible defaults for any missing configuration.
+
+#### Supported Configuration Options:
+
+- **`current_directory`** (string): Repository path for context
+- **`model_config`** (object): Model and provider settings
+  - `model`: Model name (e.g., "claude-sonnet-4-20250514", "gpt-4", "gemini-1.5-pro")
+  - `provider`: Provider name ("anthropic", "openai", "google")
+- **`temperature`** (number): Sampling temperature (0.0-2.0, default: 0.7)
+- **`max_tokens`** (number): Maximum response tokens (default: 8192)
+- **`title`** (string): Chat session title (default: "Git Assistant")
+- **`description`** (string): Assistant description
+- **`system_prompt`** (string): Custom system prompt (will include directory context if provided)
+- **`mcp_servers`** (array): Override MCP server configuration (advanced)
+
+#### Configuration Examples:
+
+**Minimal (just directory):**
+```json
+{
+  "current_directory": "/path/to/repo"
+}
+```
+
+**Different model:**
+```json
+{
+  "current_directory": "/path/to/repo",
+  "model_config": {
+    "model": "gpt-4",
+    "provider": "openai"
+  },
+  "temperature": 0.3
+}
+```
+
+**Custom system prompt:**
+```json
+{
+  "current_directory": "/path/to/repo",
+  "system_prompt": "You are a senior DevOps engineer specializing in Git workflows for large enterprise teams. Focus on automation and best practices.",
+  "title": "Enterprise Git Consultant"
+}
+```
 
 ## Implementation Details
 
@@ -151,14 +245,17 @@ struct GitChatState {
     actor_id: String,                    // This actor's ID
     chat_state_actor_id: Option<String>, // Child chat-state actor ID  
     original_config: Value,              // Enhanced chat config with git tools
+    current_directory: Option<String>,   // Repository directory context
 }
 ```
 
 ### Initialization Flow
 1. Parse base chat configuration from initial state (or use defaults)
-2. Enhance configuration with git tools and context
-3. Spawn chat-state actor with enhanced configuration
-4. Store chat-state actor ID in our state
+2. Extract current directory if provided
+3. Enhance configuration with git tools and directory context
+4. Add directory path to system prompt for better context
+5. Spawn chat-state actor with enhanced configuration
+6. Store chat-state actor ID and directory in our state
 
 ### Message Handling
 - Same as `chat-proxy-example` but with git-enhanced configuration

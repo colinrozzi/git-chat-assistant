@@ -32,20 +32,53 @@ enum GitChatResponse {
     Error { message: String },
 }
 
+// Configuration for git assistant
+#[derive(Serialize, Deserialize, Debug)]
+struct GitAssistantConfig {
+    current_directory: Option<String>,
+    model_config: Option<Value>,
+    temperature: Option<f64>,
+    max_tokens: Option<u32>,
+    system_prompt: Option<String>,
+    title: Option<String>,
+    description: Option<String>,
+    mcp_servers: Option<Value>,
+    #[serde(flatten)]
+    other: Value,
+}
+
+impl Default for GitAssistantConfig {
+    fn default() -> Self {
+        Self {
+            current_directory: None,
+            model_config: None,
+            temperature: None,
+            max_tokens: None,
+            system_prompt: None,
+            title: None,
+            description: None,
+            mcp_servers: None,
+            other: serde_json::json!({}),
+        }
+    }
+}
+
 // State management
 #[derive(Serialize, Deserialize, Debug)]
 struct GitChatState {
     actor_id: String,
     chat_state_actor_id: Option<String>,
     original_config: Value,
+    current_directory: Option<String>,
 }
 
 impl GitChatState {
-    fn new(actor_id: String, config: Value) -> Self {
+    fn new(actor_id: String, config: Value, current_directory: Option<String>) -> Self {
         Self {
             actor_id,
             chat_state_actor_id: None,
             original_config: config,
+            current_directory,
         }
     }
 
@@ -61,18 +94,35 @@ impl GitChatState {
 }
 
 impl Guest for Component {
-    fn init(_state: Option<Vec<u8>>, params: (String,)) -> Result<(Option<Vec<u8>>,), String> {
+    fn init(state: Option<Vec<u8>>, params: (String,)) -> Result<(Option<Vec<u8>>,), String> {
         log("Git chat assistant actor initializing...");
 
         let (actor_id,) = params;
 
-        // Create a predefined git-optimized configuration
-        let git_config = create_git_optimized_config();
+        // Parse initial configuration if provided
+        let (git_config, current_directory) = if let Some(state_bytes) = state {
+            match from_slice::<GitAssistantConfig>(&state_bytes) {
+                Ok(config) => {
+                    log(&format!("Parsed initial config with current_directory: {:?}", config.current_directory));
+                    let git_config = create_git_optimized_config(config.current_directory.as_deref(), &config);
+                    (git_config, config.current_directory)
+                }
+                Err(e) => {
+                    log(&format!("Failed to parse initial config, using defaults: {}", e));
+                    let git_config = create_git_optimized_config(None, &GitAssistantConfig::default());
+                    (git_config, None)
+                }
+            }
+        } else {
+            log("No initial state provided, using default configuration");
+            let git_config = create_git_optimized_config(None, &GitAssistantConfig::default());
+            (git_config, None)
+        };
 
-        log(&format!("Using predefined git config: {}", git_config));
+        log(&format!("Using git config: {}", git_config));
 
         // Create our state
-        let mut git_state = GitChatState::new(actor_id, git_config.clone());
+        let mut git_state = GitChatState::new(actor_id, git_config.clone(), current_directory);
 
         // Spawn the chat-state actor with the git config
         match spawn_chat_state_actor(&git_config) {
@@ -302,10 +352,23 @@ impl MessageServerClient for Component {
 }
 
 // Helper functions
-fn create_git_optimized_config() -> Value {
+fn create_git_optimized_config(current_directory: Option<&str>, config: &GitAssistantConfig) -> Value {
     log("Creating git-optimized configuration...");
 
-    let git_system_prompt = "You are a Git assistant with access to git tools. You can help with:
+    // Build directory context if provided
+    let directory_context = match current_directory {
+        Some(dir) => {
+            log(&format!("Including current directory context: {}", dir));
+            format!("\n\nCURRENT WORKING DIRECTORY: {}\nWhen using git tools, operate within this directory unless explicitly told otherwise. This is the repository you should focus on for all git operations.", dir)
+        }
+        None => {
+            log("No current directory specified");
+            String::new()
+        }
+    };
+
+    // Default git system prompt
+    let default_git_system_prompt = format!("You are a Git assistant with access to git tools. You can help with:
 
 - Reviewing git status and changes
 - Creating meaningful commit messages
@@ -321,31 +384,78 @@ When helping with commits:
 - Always review the changes first before suggesting commit messages
 - Create descriptive, conventional commit messages
 - Suggest appropriate files to stage if not already staged
-- Explain the impact of changes when relevant";
+- Explain the impact of changes when relevant{}", directory_context);
 
-    let config = serde_json::json!({
-        "model_config": {
-            "model": "claude-sonnet-4-20250514",
-            "provider": "anthropic"
-        },
-        "temperature": 0.7,
-        "max_tokens": 8192,
-        "system_prompt": git_system_prompt,
-        "title": "Git Assistant",
-        "description": "AI assistant with git tools for repository management and commit workflows",
-        "mcp_servers": [
-            {
-                "actor_id": null,
-                "actor": {
-                    "manifest_path": "/Users/colinrozzi/work/actor-registry/git-mcp-actor/manifest.toml"
-                },
-                "tools": null
+    // Use custom system prompt if provided, otherwise use default with directory context
+    let final_system_prompt = match &config.system_prompt {
+        Some(custom_prompt) => {
+            log("Using custom system prompt");
+            if directory_context.is_empty() {
+                custom_prompt.clone()
+            } else {
+                format!("{}{}", custom_prompt, directory_context)
             }
-        ]
+        }
+        None => {
+            log("Using default git system prompt");
+            default_git_system_prompt
+        }
+    };
+
+    // Default model config
+    let default_model_config = serde_json::json!({
+        "model": "claude-sonnet-4-20250514",
+        "provider": "anthropic"
     });
 
-    log(&format!("Created git config: {}", config));
-    config
+    // Default MCP servers (git tools)
+    let default_mcp_servers = serde_json::json!([
+        {
+            "actor_id": null,
+            "actor": {
+                "manifest_path": "/Users/colinrozzi/work/actor-registry/git-mcp-actor/manifest.toml"
+            },
+            "tools": null
+        }
+    ]);
+
+    // Build the configuration with overrides
+    let model_config = config.model_config.as_ref().unwrap_or(&default_model_config);
+    let temperature = config.temperature.unwrap_or(0.7);
+    let max_tokens = config.max_tokens.unwrap_or(8192);
+    let title = config.title.as_ref().map(|s| s.as_str()).unwrap_or("Git Assistant");
+    let description = config.description.as_ref().map(|s| s.as_str()).unwrap_or("AI assistant with git tools for repository management and commit workflows");
+    let mcp_servers = config.mcp_servers.as_ref().unwrap_or(&default_mcp_servers);
+
+    log(&format!("Using model: {:?}", model_config));
+    log(&format!("Using temperature: {}", temperature));
+    log(&format!("Using max_tokens: {}", max_tokens));
+    log(&format!("Using title: {}", title));
+
+    // Build the final configuration
+    let mut final_config = serde_json::json!({
+        "model_config": model_config,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "system_prompt": final_system_prompt,
+        "title": title,
+        "description": description,
+        "mcp_servers": mcp_servers
+    });
+
+    // Merge any additional fields from the other config
+    if let Some(obj) = final_config.as_object_mut() {
+        if let Value::Object(other_map) = &config.other {
+            for (key, value) in other_map {
+                if !obj.contains_key(key) {
+                    obj.insert(key.clone(), value.clone());
+                }
+            }
+        }
+    }
+
+    log(&format!("Created final git config: {}", final_config));
+    final_config
 }
 
 fn spawn_chat_state_actor(chat_config: &Value) -> Result<String, String> {
