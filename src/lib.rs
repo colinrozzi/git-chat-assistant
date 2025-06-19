@@ -11,7 +11,7 @@ use bindings::theater::simple::supervisor::spawn;
 use bindings::theater::simple::types::{ChannelAccept, WitActorError};
 use genai_types::Message;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, from_slice, to_vec};
+use serde_json::{from_slice, to_vec, Value};
 
 struct Component;
 
@@ -21,6 +21,7 @@ struct Component;
 enum GitChatRequest {
     GetChatStateActorId,
     AddMessage { message: Message },
+    StartChat,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -67,7 +68,7 @@ impl Guest for Component {
 
         // Create a predefined git-optimized configuration
         let git_config = create_git_optimized_config();
-        
+
         log(&format!("Using predefined git config: {}", git_config));
 
         // Create our state
@@ -87,8 +88,8 @@ impl Guest for Component {
         }
 
         // Serialize our state
-        let state_bytes = to_vec(&git_state)
-            .map_err(|e| format!("Failed to serialize git state: {}", e))?;
+        let state_bytes =
+            to_vec(&git_state).map_err(|e| format!("Failed to serialize git state: {}", e))?;
 
         log("Git chat assistant actor initialized successfully");
         Ok((Some(state_bytes),))
@@ -178,6 +179,10 @@ impl MessageServerClient for Component {
 
         // Handle the request
         let response = match request {
+            GitChatRequest::StartChat => {
+                log("Starting chat session...");
+                GitChatResponse::Success
+            }
             GitChatRequest::GetChatStateActorId => match git_state.get_chat_state_actor_id() {
                 Ok(actor_id) => {
                     log(&format!("Returning chat state actor ID: {}", actor_id));
@@ -251,8 +256,8 @@ impl MessageServerClient for Component {
             to_vec(&response).map_err(|e| format!("Failed to serialize response: {}", e))?;
 
         // Keep the same state (no changes needed)
-        let current_state_bytes = to_vec(&git_state)
-            .map_err(|e| format!("Failed to serialize current state: {}", e))?;
+        let current_state_bytes =
+            to_vec(&git_state).map_err(|e| format!("Failed to serialize current state: {}", e))?;
 
         Ok((Some(current_state_bytes), (Some(response_bytes),)))
     }
@@ -276,7 +281,10 @@ impl MessageServerClient for Component {
         params: (String,),
     ) -> Result<(Option<Vec<u8>>,), String> {
         let (channel_id,) = params;
-        log(&format!("Git chat assistant: Channel closed: {}", channel_id));
+        log(&format!(
+            "Git chat assistant: Channel closed: {}",
+            channel_id
+        ));
         Ok((state,))
     }
 
@@ -340,7 +348,6 @@ When helping with commits:
     config
 }
 
-
 fn spawn_chat_state_actor(chat_config: &Value) -> Result<String, String> {
     log("Spawning chat-state actor...");
 
@@ -371,3 +378,4 @@ fn spawn_chat_state_actor(chat_config: &Value) -> Result<String, String> {
 }
 
 bindings::export!(Component with_types_in bindings);
+
