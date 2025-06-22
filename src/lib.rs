@@ -36,6 +36,7 @@ enum GitChatResponse {
 #[derive(Serialize, Deserialize, Debug)]
 struct GitAssistantConfig {
     current_directory: Option<String>,
+    workflow: Option<String>,
     model_config: Option<Value>,
     temperature: Option<f64>,
     max_tokens: Option<u32>,
@@ -51,6 +52,7 @@ impl Default for GitAssistantConfig {
     fn default() -> Self {
         Self {
             current_directory: None,
+            workflow: None,
             model_config: None,
             temperature: None,
             max_tokens: None,
@@ -70,15 +72,17 @@ struct GitChatState {
     chat_state_actor_id: Option<String>,
     original_config: Value,
     current_directory: Option<String>,
+    workflow: Option<String>,
 }
 
 impl GitChatState {
-    fn new(actor_id: String, config: Value, current_directory: Option<String>) -> Self {
+    fn new(actor_id: String, config: Value, current_directory: Option<String>, workflow: Option<String>) -> Self {
         Self {
             actor_id,
             chat_state_actor_id: None,
             original_config: config,
             current_directory,
+            workflow,
         }
     }
 
@@ -100,29 +104,29 @@ impl Guest for Component {
         let (actor_id,) = params;
 
         // Parse initial configuration if provided
-        let (git_config, current_directory) = if let Some(state_bytes) = state {
+        let (git_config, current_directory, workflow) = if let Some(state_bytes) = state {
             match from_slice::<GitAssistantConfig>(&state_bytes) {
                 Ok(config) => {
-                    log(&format!("Parsed initial config with current_directory: {:?}", config.current_directory));
+                    log(&format!("Parsed initial config with current_directory: {:?}, workflow: {:?}", config.current_directory, config.workflow));
                     let git_config = create_git_optimized_config(config.current_directory.as_deref(), &config);
-                    (git_config, config.current_directory)
+                    (git_config, config.current_directory, config.workflow)
                 }
                 Err(e) => {
                     log(&format!("Failed to parse initial config, using defaults: {}", e));
                     let git_config = create_git_optimized_config(None, &GitAssistantConfig::default());
-                    (git_config, None)
+                    (git_config, None, None)
                 }
             }
         } else {
             log("No initial state provided, using default configuration");
             let git_config = create_git_optimized_config(None, &GitAssistantConfig::default());
-            (git_config, None)
+            (git_config, None, None)
         };
 
         log(&format!("Using git config: {}", git_config));
 
         // Create our state
-        let mut git_state = GitChatState::new(actor_id, git_config.clone(), current_directory);
+        let mut git_state = GitChatState::new(actor_id, git_config.clone(), current_directory, workflow);
 
         // Spawn the chat-state actor with the git config
         match spawn_chat_state_actor(&git_config) {
@@ -231,6 +235,75 @@ impl MessageServerClient for Component {
         let response = match request {
             GitChatRequest::StartChat => {
                 log("Starting chat session...");
+                
+                // Check if we have a workflow that requires auto-initiation
+                if let Some(workflow) = &git_state.workflow {
+                    if workflow == "commit" {
+                        log("Auto-initiating commit workflow");
+                        
+                        match git_state.get_chat_state_actor_id() {
+                            Ok(chat_actor_id) => {
+                                let auto_message = protocol::ChatStateRequest::AddMessage {
+                                    message: Message {
+                                        role: genai_types::messages::Role::User,
+                                        content: vec![genai_types::MessageContent::Text {
+                                            text: "Please analyze the current repository state and commit any pending changes with appropriate commit messages. Start by checking git status to see what files have changed.".to_string()
+                                        }],
+                                    },
+                                };
+                                
+                                let message_bytes = to_vec(&auto_message)
+                                    .map_err(|e| format!("Failed to serialize auto message: {}", e))?;
+                                
+                                match send(chat_actor_id, &message_bytes) {
+                                    Ok(_) => {
+                                        log("Auto commit message sent successfully");
+                                        
+                                        // Request generation from chat-state actor
+                                        let generation_request = protocol::ChatStateRequest::GenerateCompletion;
+                                        let generation_request_bytes = to_vec(&generation_request)
+                                            .map_err(|e| format!("Failed to serialize generation request: {}", e))?;
+                                        
+                                        match send(chat_actor_id, &generation_request_bytes) {
+                                            Ok(_) => {
+                                                log("Auto generation request sent successfully");
+                                            }
+                                            Err(e) => {
+                                                let error_msg = format!("Failed to send auto generation request: {:?}", e);
+                                                log(&error_msg);
+                                                return Ok((
+                                                    Some(to_vec(&git_state).unwrap_or_default()),
+                                                    (Some(to_vec(&GitChatResponse::Error { message: error_msg }).unwrap_or_default()),),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        let error_msg = format!("Failed to send auto commit message: {:?}", e);
+                                        log(&error_msg);
+                                        return Ok((
+                                            Some(to_vec(&git_state).unwrap_or_default()),
+                                            (Some(to_vec(&GitChatResponse::Error { message: error_msg }).unwrap_or_default()),),
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                let error_msg = format!("Chat state actor not available for auto workflow: {}", e);
+                                log(&error_msg);
+                                return Ok((
+                                    Some(to_vec(&git_state).unwrap_or_default()),
+                                    (Some(to_vec(&GitChatResponse::Error { message: error_msg }).unwrap_or_default()),),
+                                ));
+                            }
+                        }
+                    } else {
+                        log(&format!("Workflow '{}' does not require auto-initiation", workflow));
+                    }
+                } else {
+                    log("No workflow specified, starting normal chat session");
+                }
+                
                 GitChatResponse::Success
             }
             GitChatRequest::GetChatStateActorId => match git_state.get_chat_state_actor_id() {
@@ -367,6 +440,56 @@ fn create_git_optimized_config(current_directory: Option<&str>, config: &GitAssi
         }
     };
 
+    // Build workflow context if provided
+    let workflow_context = match config.workflow.as_deref() {
+        Some("commit") => {
+            log("Adding commit workflow context");
+            "\n\nWORKFLOW: AUTOMATIC COMMIT\n\
+            Your primary task is to analyze the current repository state and create appropriate commits:\n\
+            1. First, check git status to see what files have changed\n\
+            2. Review the actual changes using git diff\n\
+            3. Stage appropriate files for commit\n\
+            4. Create meaningful, conventional commit messages\n\
+            5. Execute the commit\n\
+            \n\
+            Focus on creating clean, atomic commits with descriptive messages. \
+            If there are multiple logical changes, consider separate commits. \
+            Always explain what you're doing and why."
+        }
+        Some("review") => {
+            log("Adding review workflow context");
+            "\n\nWORKFLOW: CODE REVIEW\n\
+            Your primary task is to review code changes and provide feedback:\n\
+            1. Check git status and diff to understand changes\n\
+            2. Analyze code quality, style, and potential issues\n\
+            3. Suggest improvements and optimizations\n\
+            4. Check for security vulnerabilities or bugs\n\
+            5. Provide constructive feedback\n\
+            \n\
+            Focus on helping improve code quality while being constructive and educational."
+        }
+        Some("rebase") => {
+            log("Adding rebase workflow context");
+            "\n\nWORKFLOW: INTERACTIVE REBASE\n\
+            Your primary task is to help with git rebase operations:\n\
+            1. Understand the current branch state and history\n\
+            2. Help plan rebase strategies\n\
+            3. Assist with conflict resolution\n\
+            4. Guide through interactive rebase steps\n\
+            5. Ensure clean, linear history\n\
+            \n\
+            Focus on maintaining a clean git history while preserving important changes."
+        }
+        Some(workflow) => {
+            log(&format!("Unknown workflow type: {}, using default behavior", workflow));
+            ""
+        }
+        None => {
+            log("No workflow specified");
+            ""
+        }
+    };
+
     // Default git system prompt
     let default_git_system_prompt = format!("You are a Git assistant with access to git tools. You can help with:
 
@@ -384,20 +507,16 @@ When helping with commits:
 - Always review the changes first before suggesting commit messages
 - Create descriptive, conventional commit messages
 - Suggest appropriate files to stage if not already staged
-- Explain the impact of changes when relevant{}", directory_context);
+- Explain the impact of changes when relevant{}{}", directory_context, workflow_context);
 
-    // Use custom system prompt if provided, otherwise use default with directory context
+    // Use custom system prompt if provided, otherwise use default with directory and workflow context
     let final_system_prompt = match &config.system_prompt {
         Some(custom_prompt) => {
-            log("Using custom system prompt");
-            if directory_context.is_empty() {
-                custom_prompt.clone()
-            } else {
-                format!("{}{}", custom_prompt, directory_context)
-            }
+            log("Using custom system prompt with context");
+            format!("{}{}{}", custom_prompt, directory_context, workflow_context)
         }
         None => {
-            log("Using default git system prompt");
+            log("Using default git system prompt with workflow context");
             default_git_system_prompt
         }
     };
