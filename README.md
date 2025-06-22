@@ -64,6 +64,7 @@ The actor comes with optimized defaults for git workflows, but **every setting c
 - **Custom system prompts** (with automatic directory context)
 - **Session titles and descriptions**
 - **Current directory** for repository context
+- **Workflow automation** (commit, review, rebase)
 - **MCP server configurations** (advanced)
 
 ### Using with theater-chat
@@ -95,14 +96,34 @@ Create a configuration file that includes the repository path:
 }
 ```
 
+#### Automated Commit Workflow (New!)
+
+For automated commit workflows, specify the `workflow` field:
+
+```json
+{
+  "actor": {
+    "manifest_path": "/path/to/git-chat-assistant/manifest.toml",
+    "initial_state": {
+      "current_directory": "/path/to/your/repository",
+      "workflow": "commit",
+      "temperature": 0.3,
+      "title": "Auto-Commit Assistant"
+    }
+  }
+}
+```
+
 Then run:
 ```bash
 theater-chat --config git-config.json
 ```
 
-With directory context, the assistant will know exactly which repository to operate on and can provide more targeted assistance.
+With directory context, the assistant will know exactly which repository to operate on and can provide more targeted assistance. With workflow automation, the assistant will automatically start the specified workflow when the session begins.
 
 ## Example Interactions
+
+### Interactive Git Assistant
 
 ```
 👤 You: What's the current status of my repository?
@@ -133,6 +154,40 @@ Would you like me to help you stage these changes or create a commit?
 - Refactor lib.rs for better modularity"
 
 Would you like me to create this commit or would you prefer to modify the message?
+```
+
+### Automated Commit Workflow
+
+```
+🚀 Auto-Commit Assistant: Starting automated commit workflow...
+
+🔧 git status
+
+💬 I can see you have several changes ready for commit:
+- Modified: src/workflow.rs, README.md
+- Added: commit-workflow-config.json
+
+Let me analyze these changes and create appropriate commits.
+
+🔧 git diff src/workflow.rs
+
+🔧 git add src/workflow.rs
+
+🔧 git commit -m "feat: Add automated workflow support
+
+- Add workflow field to GitAssistantConfig
+- Implement commit workflow auto-initiation
+- Add workflow-specific system prompts"
+
+🔧 git add README.md commit-workflow-config.json
+
+🔧 git commit -m "docs: Update documentation for workflow feature
+
+- Add workflow configuration examples
+- Document automated commit workflow
+- Add example configuration files"
+
+✅ Successfully created 2 commits with meaningful messages!
 ```
 
 ## Git Capabilities
@@ -197,6 +252,7 @@ When providing initial state, you can override any of the default settings:
 #### Supported Configuration Options:
 
 - **`current_directory`** (string): Repository path for context
+- **`workflow`** (string): Automated workflow type ("commit", "review", "rebase")
 - **`model_config`** (object): Model and provider settings
   - `model`: Model name (e.g., "claude-sonnet-4-20250514", "gpt-4", "gemini-1.5-pro")
   - `provider`: Provider name ("anthropic", "openai", "google")
@@ -213,6 +269,26 @@ When providing initial state, you can override any of the default settings:
 ```json
 {
   "current_directory": "/path/to/repo"
+}
+```
+
+**Automated commit workflow:**
+```json
+{
+  "current_directory": "/path/to/repo",
+  "workflow": "commit",
+  "temperature": 0.3,
+  "title": "Auto-Commit Assistant"
+}
+```
+
+**Code review workflow:**
+```json
+{
+  "current_directory": "/path/to/repo",
+  "workflow": "review",
+  "temperature": 0.5,
+  "title": "Code Review Assistant"
 }
 ```
 
@@ -246,16 +322,18 @@ struct GitChatState {
     chat_state_actor_id: Option<String>, // Child chat-state actor ID  
     original_config: Value,              // Enhanced chat config with git tools
     current_directory: Option<String>,   // Repository directory context
+    workflow: Option<String>,            // Automated workflow type
 }
 ```
 
 ### Initialization Flow
 1. Parse base chat configuration from initial state (or use defaults)
-2. Extract current directory if provided
-3. Enhance configuration with git tools and directory context
-4. Add directory path to system prompt for better context
+2. Extract current directory and workflow if provided
+3. Enhance configuration with git tools, directory context, and workflow-specific prompts
+4. Add directory path and workflow context to system prompt
 5. Spawn chat-state actor with enhanced configuration
-6. Store chat-state actor ID and directory in our state
+6. Store chat-state actor ID, directory, and workflow in our state
+7. Auto-initiate workflow if specified (e.g., start commit analysis for "commit" workflow)
 
 ### Message Handling
 - Same as `chat-proxy-example` but with git-enhanced configuration
@@ -273,11 +351,38 @@ struct GitChatState {
 - `manifest.toml` - Theater actor manifest
 - `wit/` - Component interface definitions
 
+## Workflow Types
+
+### Commit Workflow (`"workflow": "commit"`)
+Automatically analyzes repository state and creates appropriate commits:
+- Checks `git status` to identify changes
+- Reviews diffs to understand modifications
+- Stages files appropriately
+- Creates meaningful, conventional commit messages
+- Executes commits with explanations
+
+### Review Workflow (`"workflow": "review"`)
+Provides comprehensive code review:
+- Analyzes code changes for quality and style
+- Identifies potential bugs and security issues
+- Suggests improvements and optimizations
+- Provides constructive feedback
+- Checks for best practices
+
+### Rebase Workflow (`"workflow": "rebase"`)
+Assists with git rebase operations:
+- Plans rebase strategies
+- Helps resolve merge conflicts
+- Guides through interactive rebase steps
+- Ensures clean, linear history
+- Maintains important changes
+
 ## Future Enhancements
 
 - Repository detection and automatic configuration
 - Project-specific git workflows
 - Integration with GitHub/GitLab APIs
 - Advanced conflict resolution assistance
-- Code review automation
+- Pre-commit hook integration
 - Commit template management
+- Multi-repository batch operations
