@@ -6,7 +6,7 @@ use bindings::exports::theater::simple::actor::Guest;
 use bindings::exports::theater::simple::message_server_client::Guest as MessageServerClient;
 use bindings::exports::theater::simple::supervisor_handlers::Guest as SupervisorHandlers;
 use bindings::theater::simple::message_server_host::send;
-use bindings::theater::simple::runtime::log;
+use bindings::theater::simple::runtime::{log, shutdown};
 use bindings::theater::simple::supervisor::spawn;
 use bindings::theater::simple::types::{ChannelAccept, WitActorError};
 use genai_types::Message;
@@ -65,6 +65,9 @@ impl Default for GitAssistantConfig {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct TaskComplete;
+
 // State management
 #[derive(Serialize, Deserialize, Debug)]
 struct GitChatState {
@@ -76,7 +79,12 @@ struct GitChatState {
 }
 
 impl GitChatState {
-    fn new(actor_id: String, config: Value, current_directory: Option<String>, workflow: Option<String>) -> Self {
+    fn new(
+        actor_id: String,
+        config: Value,
+        current_directory: Option<String>,
+        workflow: Option<String>,
+    ) -> Self {
         Self {
             actor_id,
             chat_state_actor_id: None,
@@ -101,32 +109,45 @@ impl Guest for Component {
     fn init(state: Option<Vec<u8>>, params: (String,)) -> Result<(Option<Vec<u8>>,), String> {
         log("Git chat assistant actor initializing...");
 
-        let (actor_id,) = params;
+        let (self_id,) = params;
 
         // Parse initial configuration if provided
         let (git_config, current_directory, workflow) = if let Some(state_bytes) = state {
             match from_slice::<GitAssistantConfig>(&state_bytes) {
                 Ok(config) => {
-                    log(&format!("Parsed initial config with current_directory: {:?}, workflow: {:?}", config.current_directory, config.workflow));
-                    let git_config = create_git_optimized_config(config.current_directory.as_deref(), &config);
+                    log(&format!(
+                        "Parsed initial config with current_directory: {:?}, workflow: {:?}",
+                        config.current_directory, config.workflow
+                    ));
+                    let git_config = create_git_optimized_config(
+                        &self_id,
+                        config.current_directory.as_deref(),
+                        &config,
+                    );
                     (git_config, config.current_directory, config.workflow)
                 }
                 Err(e) => {
-                    log(&format!("Failed to parse initial config, using defaults: {}", e));
-                    let git_config = create_git_optimized_config(None, &GitAssistantConfig::default());
+                    log(&format!(
+                        "Failed to parse initial config, using defaults: {}",
+                        e
+                    ));
+                    let git_config =
+                        create_git_optimized_config(&self_id, None, &GitAssistantConfig::default());
                     (git_config, None, None)
                 }
             }
         } else {
             log("No initial state provided, using default configuration");
-            let git_config = create_git_optimized_config(None, &GitAssistantConfig::default());
+            let git_config =
+                create_git_optimized_config(&self_id, None, &GitAssistantConfig::default());
             (git_config, None, None)
         };
 
         log(&format!("Using git config: {}", git_config));
 
         // Create our state
-        let mut git_state = GitChatState::new(actor_id, git_config.clone(), current_directory, workflow);
+        let mut git_state =
+            GitChatState::new(self_id, git_config.clone(), current_directory, workflow);
 
         // Spawn the chat-state actor with the git config
         match spawn_chat_state_actor(&git_config) {
@@ -176,7 +197,32 @@ impl MessageServerClient for Component {
         _params: (Vec<u8>,),
     ) -> Result<(Option<Vec<u8>>,), String> {
         log("Git chat assistant handling send message");
-        Ok((state,))
+
+        let parsed_state = match state {
+            Some(state_bytes) => serde_json::from_slice::<Vec<u8>>(&state_bytes)
+                .map_err(|e| format!("Failed to deserialize state: {}", e))?,
+            None => {
+                log("No state available for send message");
+                return Err("No state available".to_string());
+            }
+        };
+
+        match from_slice::<TaskComplete>(&parsed_state) {
+            Ok(msg) => {
+                log(&format!("Received task completion message: {:?}", msg));
+
+                let _ = shutdown(None);
+            }
+            Err(e) => {
+                let error_msg = format!("Failed to parse message: {}", e);
+                log(&error_msg);
+                return Err(error_msg);
+            }
+        };
+
+        let updated_state = to_vec(&parsed_state)
+            .map_err(|e| format!("Failed to serialize updated state: {}", e))?;
+        Ok((Some(updated_state),))
     }
 
     fn handle_request(
@@ -235,12 +281,12 @@ impl MessageServerClient for Component {
         let response = match request {
             GitChatRequest::StartChat => {
                 log("Starting chat session...");
-                
+
                 // Check if we have a workflow that requires auto-initiation
                 if let Some(workflow) = &git_state.workflow {
                     if workflow == "commit" {
                         log("Auto-initiating commit workflow");
-                        
+
                         match git_state.get_chat_state_actor_id() {
                             Ok(chat_actor_id) => {
                                 let auto_message = protocol::ChatStateRequest::AddMessage {
@@ -251,59 +297,89 @@ impl MessageServerClient for Component {
                                         }],
                                     },
                                 };
-                                
-                                let message_bytes = to_vec(&auto_message)
-                                    .map_err(|e| format!("Failed to serialize auto message: {}", e))?;
-                                
+
+                                let message_bytes = to_vec(&auto_message).map_err(|e| {
+                                    format!("Failed to serialize auto message: {}", e)
+                                })?;
+
                                 match send(chat_actor_id, &message_bytes) {
                                     Ok(_) => {
                                         log("Auto commit message sent successfully");
-                                        
+
                                         // Request generation from chat-state actor
-                                        let generation_request = protocol::ChatStateRequest::GenerateCompletion;
+                                        let generation_request =
+                                            protocol::ChatStateRequest::GenerateCompletion;
                                         let generation_request_bytes = to_vec(&generation_request)
-                                            .map_err(|e| format!("Failed to serialize generation request: {}", e))?;
-                                        
+                                            .map_err(|e| {
+                                                format!(
+                                                    "Failed to serialize generation request: {}",
+                                                    e
+                                                )
+                                            })?;
+
                                         match send(chat_actor_id, &generation_request_bytes) {
                                             Ok(_) => {
                                                 log("Auto generation request sent successfully");
                                             }
                                             Err(e) => {
-                                                let error_msg = format!("Failed to send auto generation request: {:?}", e);
+                                                let error_msg = format!(
+                                                    "Failed to send auto generation request: {:?}",
+                                                    e
+                                                );
                                                 log(&error_msg);
                                                 return Ok((
                                                     Some(to_vec(&git_state).unwrap_or_default()),
-                                                    (Some(to_vec(&GitChatResponse::Error { message: error_msg }).unwrap_or_default()),),
+                                                    (Some(
+                                                        to_vec(&GitChatResponse::Error {
+                                                            message: error_msg,
+                                                        })
+                                                        .unwrap_or_default(),
+                                                    ),),
                                                 ));
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        let error_msg = format!("Failed to send auto commit message: {:?}", e);
+                                        let error_msg =
+                                            format!("Failed to send auto commit message: {:?}", e);
                                         log(&error_msg);
                                         return Ok((
                                             Some(to_vec(&git_state).unwrap_or_default()),
-                                            (Some(to_vec(&GitChatResponse::Error { message: error_msg }).unwrap_or_default()),),
+                                            (Some(
+                                                to_vec(&GitChatResponse::Error {
+                                                    message: error_msg,
+                                                })
+                                                .unwrap_or_default(),
+                                            ),),
                                         ));
                                     }
                                 }
                             }
                             Err(e) => {
-                                let error_msg = format!("Chat state actor not available for auto workflow: {}", e);
+                                let error_msg = format!(
+                                    "Chat state actor not available for auto workflow: {}",
+                                    e
+                                );
                                 log(&error_msg);
                                 return Ok((
                                     Some(to_vec(&git_state).unwrap_or_default()),
-                                    (Some(to_vec(&GitChatResponse::Error { message: error_msg }).unwrap_or_default()),),
+                                    (Some(
+                                        to_vec(&GitChatResponse::Error { message: error_msg })
+                                            .unwrap_or_default(),
+                                    ),),
                                 ));
                             }
                         }
                     } else {
-                        log(&format!("Workflow '{}' does not require auto-initiation", workflow));
+                        log(&format!(
+                            "Workflow '{}' does not require auto-initiation",
+                            workflow
+                        ));
                     }
                 } else {
                     log("No workflow specified, starting normal chat session");
                 }
-                
+
                 GitChatResponse::Success
             }
             GitChatRequest::GetChatStateActorId => match git_state.get_chat_state_actor_id() {
@@ -425,7 +501,11 @@ impl MessageServerClient for Component {
 }
 
 // Helper functions
-fn create_git_optimized_config(current_directory: Option<&str>, config: &GitAssistantConfig) -> Value {
+fn create_git_optimized_config(
+    self_id: &str,
+    current_directory: Option<&str>,
+    config: &GitAssistantConfig,
+) -> Value {
     log("Creating git-optimized configuration...");
 
     // Build directory context if provided
@@ -481,7 +561,10 @@ fn create_git_optimized_config(current_directory: Option<&str>, config: &GitAssi
             Focus on maintaining a clean git history while preserving important changes."
         }
         Some(workflow) => {
-            log(&format!("Unknown workflow type: {}, using default behavior", workflow));
+            log(&format!(
+                "Unknown workflow type: {}, using default behavior",
+                workflow
+            ));
             ""
         }
         None => {
@@ -535,15 +618,35 @@ When helping with commits:
                 "manifest_path": "/Users/colinrozzi/work/actor-registry/git-mcp-actor/manifest.toml"
             },
             "tools": null
+        },
+        {
+            "actor_id": null,
+            "actor": {
+                "manifest_path": "/Users/colinrozzi/work/actor-registry/task-monitor-mcp-actor/manifest.toml"
+            },
+            "config": {
+                "management_actor": self_id,
+            },
+            "tools": null
         }
     ]);
 
     // Build the configuration with overrides
-    let model_config = config.model_config.as_ref().unwrap_or(&default_model_config);
+    let model_config = config
+        .model_config
+        .as_ref()
+        .unwrap_or(&default_model_config);
     let temperature = config.temperature.unwrap_or(0.7);
     let max_tokens = config.max_tokens.unwrap_or(8192);
-    let title = config.title.as_ref().map(|s| s.as_str()).unwrap_or("Git Assistant");
-    let description = config.description.as_ref().map(|s| s.as_str()).unwrap_or("AI assistant with git tools for repository management and commit workflows");
+    let title = config
+        .title
+        .as_ref()
+        .map(|s| s.as_str())
+        .unwrap_or("Git Assistant");
+    let description =
+        config.description.as_ref().map(|s| s.as_str()).unwrap_or(
+            "AI assistant with git tools for repository management and commit workflows",
+        );
     let mcp_servers = config.mcp_servers.as_ref().unwrap_or(&default_mcp_servers);
 
     log(&format!("Using model: {:?}", model_config));
@@ -607,4 +710,3 @@ fn spawn_chat_state_actor(chat_config: &Value) -> Result<String, String> {
 }
 
 bindings::export!(Component with_types_in bindings);
-
