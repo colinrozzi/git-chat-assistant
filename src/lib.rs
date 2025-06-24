@@ -15,6 +15,13 @@ use serde_json::{from_slice, to_vec, Value};
 
 struct Component;
 
+const CHAT_STATE_MANIFEST_PATH: &str =
+    "/Users/colinrozzi/work/actor-registry/chat-state/manifest.toml";
+const TASK_MONITOR_MANIFEST_PATH: &str =
+    "/Users/colinrozzi/work/actor-registry/task-monitor-mcp-actor/manifest.toml";
+const GIT_MCP_MANIFEST_PATH: &str =
+    "/Users/colinrozzi/work/actor-registry/git-mcp-actor/manifest.toml";
+
 // Protocol types for external communication
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
@@ -673,14 +680,14 @@ fn create_git_optimized_config(
         {
             "actor_id": null,
             "actor": {
-                "manifest_path": "/Users/colinrozzi/work/actor-registry/git-mcp-actor/manifest.toml"
+                "manifest_path": GIT_MCP_MANIFEST_PATH,
             },
             "tools": null
         },
         {
             "actor_id": null,
             "actor": {
-                "manifest_path": "/Users/colinrozzi/work/actor-registry/task-monitor-mcp-actor/manifest.toml",
+                "manifest_path": TASK_MONITOR_MANIFEST_PATH,
                 "init_state": {
                     "management_actor": self_id,
                 }
@@ -764,8 +771,6 @@ fn create_git_optimized_config(
 fn spawn_chat_state_actor(chat_config: &Value) -> Result<String, String> {
     log("Spawning chat-state actor...");
 
-    let manifest_path = "/Users/colinrozzi/work/actor-registry/chat-state/manifest.toml";
-
     // Create initial state for chat-state actor
     let initial_state = serde_json::json!({
         "config": chat_config
@@ -775,7 +780,7 @@ fn spawn_chat_state_actor(chat_config: &Value) -> Result<String, String> {
         .map_err(|e| format!("Failed to serialize chat-state config: {}", e))?;
 
     // Spawn the actor
-    match spawn(manifest_path, Some(&initial_state_bytes)) {
+    match spawn(CHAT_STATE_MANIFEST_PATH, Some(&initial_state_bytes)) {
         Ok(actor_id) => {
             log(&format!(
                 "Successfully spawned chat-state actor: {}",
