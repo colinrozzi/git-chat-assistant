@@ -1,0 +1,11 @@
+{
+  "actor": {
+    "manifest_path": "/Users/colinrozzi/work/actor-registry/git-chat-assistant/manifest.toml",
+    "initial_state": {
+      "current_directory": "/Users/colinrozzi/work/tools/commit",
+      "workflow": "commit",
+      "temperature": 0.3,
+      "title": "Auto-Commit Assistant"
+    }
+  }
+}
