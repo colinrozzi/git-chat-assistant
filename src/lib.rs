@@ -16,11 +16,11 @@ use serde_json::{from_slice, to_vec, Value};
 struct Component;
 
 const CHAT_STATE_MANIFEST_PATH: &str =
-    "/Users/colinrozzi/work/actor-registry/chat-state/manifest.toml";
+    "https://github.com/colinrozzi/chat-state/releases/download/v0.1.4/manifest.toml";
 const TASK_MONITOR_MANIFEST_PATH: &str =
-    "/Users/colinrozzi/work/actor-registry/task-monitor-mcp-actor/manifest.toml";
+    "https://github.com/colinrozzi/task-monitor-mcp-actor/releases/download/v0.1.0/manifest.toml";
 const GIT_MCP_MANIFEST_PATH: &str =
-    "/Users/colinrozzi/work/actor-registry/git-mcp-actor/manifest.toml";
+    "https://github.com/colinrozzi/git-mcp-actor/releases/download/v0.1.0/manifest.toml";
 
 // Protocol types for external communication
 #[derive(Serialize, Deserialize, Debug)]
