@@ -16,11 +16,11 @@ use serde_json::{from_slice, to_vec, Value};
 struct Component;
 
 const CHAT_STATE_MANIFEST_PATH: &str =
-    "https://github.com/colinrozzi/chat-state/releases/download/v0.1.4/manifest.toml";
+    "https://github.com/colinrozzi/chat-state/releases/latest/download/manifest.toml";
 const TASK_MONITOR_MANIFEST_PATH: &str =
-    "https://github.com/colinrozzi/task-monitor-mcp-actor/releases/download/v0.1.0/manifest.toml";
+    "https://github.com/colinrozzi/task-monitor-mcp-actor/releases/latest/download/manifest.toml";
 const GIT_MCP_MANIFEST_PATH: &str =
-    "https://github.com/colinrozzi/git-mcp-actor/releases/download/v0.1.0/manifest.toml";
+    "https://github.com/colinrozzi/git-mcp-actor/releases/latest/download/manifest.toml";
 
 // Protocol types for external communication
 #[derive(Serialize, Deserialize, Debug)]
@@ -184,7 +184,10 @@ impl SupervisorHandlers for Component {
     ) -> Result<(Option<Vec<u8>>,), String> {
         let (child_id, error) = params;
         log(&format!("Child error from {}: {:?}", child_id, error));
-        Ok((state,))
+        Err(format!(
+            "Child actor {} encountered an error: {:?}",
+            child_id, error
+        ))
     }
 
     fn handle_child_exit(
