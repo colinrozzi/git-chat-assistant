@@ -198,6 +198,15 @@ impl SupervisorHandlers for Component {
         log(&format!("Child exit: {}", child_id));
         Ok((state,))
     }
+
+    fn handle_child_external_stop(
+        state: Option<Vec<u8>>,
+        params: (String,),
+    ) -> Result<(Option<Vec<u8>>,), String> {
+        let (child_id,) = params;
+        log(&format!("Child external stop: {}", child_id));
+        Ok((state,))
+    }
 }
 
 impl MessageServerClient for Component {
