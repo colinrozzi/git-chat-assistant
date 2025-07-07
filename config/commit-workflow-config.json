@@ -1,8 +1,6 @@
 {
-  "current_directory": "/Users/colinrozzi/work/tools/commit",
+  "current_directory": "/Users/colinrozzi/work/tmp/test-git",
   "workflow": "commit",
-  "temperature": 0.3,
-  "max_tokens": 4096,
   "title": "Auto-Commit Assistant",
   "description": "Automated git commit workflow assistant"
 }

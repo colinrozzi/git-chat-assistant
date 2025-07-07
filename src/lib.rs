@@ -8,7 +8,7 @@ use bindings::exports::theater::simple::supervisor_handlers::Guest as Supervisor
 use bindings::theater::simple::message_server_host::send;
 use bindings::theater::simple::runtime::{log, shutdown};
 use bindings::theater::simple::supervisor::spawn;
-use bindings::theater::simple::types::{ChannelAccept, WitActorError};
+use bindings::theater::simple::types::{ChannelAccept, Event, WitActorError, WitErrorType};
 use genai_types::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, to_vec, Value};
@@ -16,7 +16,8 @@ use serde_json::{from_slice, to_vec, Value};
 struct Component;
 
 const CHAT_STATE_MANIFEST_PATH: &str =
-    "https://github.com/colinrozzi/chat-state/releases/latest/download/manifest.toml";
+    //"https://github.com/colinrozzi/chat-state/releases/latest/download/manifest.toml";
+    "/Users/colinrozzi/work/actor-registry/chat-state/manifest.toml";
 const TASK_MONITOR_MANIFEST_PATH: &str =
     "https://github.com/colinrozzi/task-monitor-mcp-actor/releases/latest/download/manifest.toml";
 const GIT_MCP_MANIFEST_PATH: &str =
@@ -177,17 +178,65 @@ impl Guest for Component {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+pub struct ChainEvent {
+    /// Cryptographic hash of this event's content, used as its identifier.
+    /// This is calculated based on all other fields except the hash itself.
+    pub hash: Vec<u8>,
+    /// Hash of the parent event, or None if this is the first event in the chain.
+    /// This creates the cryptographic linking between events.
+    pub parent_hash: Option<Vec<u8>>,
+    /// Type identifier for the event, used to categorize and filter events.
+    /// Common types include "state_change", "message", "http_request", etc.
+    pub event_type: String,
+    /// The actual payload of the event, typically serialized structured data.
+    pub data: Vec<u8>,
+    /// Unix timestamp (in seconds) when the event was created.
+    pub timestamp: u64,
+    /// Optional human-readable description of the event for logging and debugging.
+    pub description: Option<String>,
+}
+
 impl SupervisorHandlers for Component {
     fn handle_child_error(
         state: Option<Vec<u8>>,
         params: (String, WitActorError),
     ) -> Result<(Option<Vec<u8>>,), String> {
-        let (child_id, error) = params;
-        log(&format!("Child error from {}: {:?}", child_id, error));
-        Err(format!(
-            "Child actor {} encountered an error: {:?}",
-            child_id, error
-        ))
+        let (child, error) = params;
+
+        log(&format!(
+            "Child {} encountered an error: {:?}",
+            child, error
+        ));
+
+        match error {
+            WitActorError {
+                error_type: WitErrorType::Internal,
+                data,
+            } => {
+                log("Internal error type");
+                let error_event: ChainEvent = match from_slice(&data.unwrap()) {
+                    Ok(event) => event,
+                    Err(e) => {
+                        let error_msg = format!("Failed to parse internal error data: {}", e);
+                        log(&error_msg);
+                        return Err(error_msg);
+                    }
+                };
+
+                log(&format!("Internal error event: {:?}", error_event));
+
+                let error_str = String::from_utf8_lossy(&error_event.data);
+                Err(format!("Internal error in child {}: {}", child, error_str))
+            }
+            _ => {
+                log("Other error type");
+                let data = error.data.unwrap();
+                log(&format!("Error data: {:?}", data));
+                let error_str = String::from_utf8_lossy(&data);
+                Err(format!("Other error in child {}: {}", child, error_str))
+            }
+        }
     }
 
     fn handle_child_exit(
