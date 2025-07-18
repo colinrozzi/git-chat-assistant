@@ -17,3 +17,6 @@ package = "theater:git-chat-assistant"
 
 [package.metadata.component.target.dependencies]
 "theater:simple" = { path = "./wit/deps/theater-simple" }
+
+[package.metadata.component.bindings]
+derives = ["serde::Serialize", "serde::Deserialize"]
